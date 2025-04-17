@@ -1,0 +1,92 @@
+volumes:
+  neo4j_data:
+  postgres_data:
+
+networks:
+  backend:
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    networks: ['backend']
+    restart: unless-stopped
+    ports:
+      - 9621:9621
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USERNAME
+      - NEO4J_PASSWORD
+      - LLM_BINDING=openai
+      - LLM_MODEL=gpt-4o-mini
+      - LLM_BINDING_HOST=https://api.openai.com/v1
+      - LLM_BINDING_API_KEY=${OPENAI_API_KEY}
+      - MAX_TOKENS=32768
+      - EMBEDDING_BINDING=openai
+      - EMBEDDING_BINDING_HOST=https://api.openai.com/v1
+      - EMBEDDING_BINDING_API_KEY=${OPENAI_API_KEY}
+      - EMBEDDING_DIM=1536
+      - EMBEDDING_MODEL=text-embedding-3-small
+      - ENABLE_LLM_CACHE_FOR_EXTRACT=true
+      - LIGHTRAG_KV_STORAGE=PGKVStorage
+      - LIGHTRAG_VECTOR_STORAGE=PGVectorStorage
+      - LIGHTRAG_GRAPH_STORAGE=Neo4JStorage
+      - LIGHTRAG_DOC_STATUS_STORAGE=PGDocStatusStorage
+      - AUTH_ACCOUNTS
+      - TOKEN_SECRET
+      - TOKEN_EXPIRE_HOURS=4
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DATABASE=${POSTGRES_DB}
+      - TIMEOUT=300
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    hostname: postgres
+    networks: ['backend']
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+    ports:
+      - 5432:5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h localhost -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  neo4j:
+    image: graphstack/dozerdb:5.26.3.0
+    hostname: neo4j
+    networks: ['backend']
+    restart: unless-stopped
+    ports:
+      - 7474:7474
+      - 7687:7687
+    environment:
+      - NEO4J_AUTH=${NEO4J_USERNAME}/${NEO4J_PASSWORD}
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_apoc_export_file_enabled=true
+      - NEO4J_apoc_import_file_enabled=true
+      - NEO4J_dbms_security_procedures_unrestricted='*'
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ['CMD-SHELL', "echo 'RETURN 1' | cypher-shell -u ${NEO4J_USERNAME} -p ${NEO4J_PASSWORD} || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
