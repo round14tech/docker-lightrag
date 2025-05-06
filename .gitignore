@@ -13,4 +13,7 @@ wheels/
 # Misc
 .env
 .DS_Store
+.ruff_cache
+.mypy_cache
+.pytest_cache
 .rag_storage

@@ -1,36 +1,53 @@
-FROM python:3.11-slim@sha256:82c07f2f6e35255b92eb16f38dbd22679d5e8fb523064138d7c6468e7bf0c15b
+# Use a Python image with uv pre-installed
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim as builder
 
-ENV PYTHONUNBUFFERED=1
-ENV USER_NAME=lightrag
-ENV USER_HOME=/home/${USER_NAME}
-ENV WORKING_DIR=${USER_HOME}/rag_storage
-ENV INPUT_DIR=${USER_HOME}/inputs
-ENV PATH="/root/.cargo/bin:${USER_HOME}/.local/bin:${PATH}"
-ENV PYTHONPATH="${USER_HOME}/.local/lib/python3.11/site-packages:${PYTHONPATH}"
+# Enable bytecode compilation
+ENV UV_COMPILE_BYTECODE=1
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    build-essential \
-    pkg-config \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+# Copy from the cache instead of linking since it's a mounted volume
+ENV UV_LINK_MODE=copy
 
-# Create user and set working directory
-RUN useradd --create-home ${USER_NAME}
+# Disable Python downloads, because we want to use the system interpreter
+# across both images. If using a managed Python version, it needs to be
+# copied from the build image into the final image; see `standalone.Dockerfile`
+# for an example.
+ENV UV_PYTHON_DOWNLOADS=0
 
-# Create necessary directories with proper ownership
-RUN mkdir -p ${WORKING_DIR} ${INPUT_DIR} && \
-    chown -R ${USER_NAME}:${USER_NAME} ${USER_HOME}
+# Install the project into `/app`
+WORKDIR /app
+
+# Install the project's dependencies using the lockfile and settings
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --frozen --no-install-project --no-dev
+
+# Then, add the rest of the project source code and install it
+# Installing separately from its dependencies allows optimal layer caching
+ADD . /app
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+
+# Then, use a final image without uv
+FROM python:3.11-slim-bookworm
+
+# Create a non-root user
+RUN useradd -m app
+
+# Copy the application from the builder
+COPY --from=builder --chown=app:app /app /app
+
+# Set working directory
+WORKDIR /app
+
+# Place executables in the environment at the front of the path
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH="/app:$PYTHONPATH"
+ENV WORKING_DIR=/app/rag_storage
+ENV INPUT_DIR=/app/inputs
 
 # Switch to non-root user
-USER ${USER_NAME}
-WORKDIR ${USER_HOME}
-
-# Copy requirements first to leverage Docker cache
-COPY --chown=${USER_NAME}:${USER_NAME} ./requirements.txt requirements.txt
-RUN pip install --upgrade pip
-RUN pip install --user --no-cache-dir --upgrade -r requirements.txt
+USER app
 
 # Expose default port
 EXPOSE 9621
