@@ -29,7 +29,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
 # Then, use a final image without uv
-FROM python:3.11-slim-bookworm
+FROM python:3.13-slim-bookworm
 
 # Create a non-root user
 RUN useradd -m app
